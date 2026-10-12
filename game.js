@@ -9,13 +9,6 @@ const container = document.getElementById('game-container');
 const speedHud = document.getElementById('speed-meter');
 const vehicleHud = document.getElementById('vehicle-type');
 const positionHud = document.getElementById('position');
-const shopPrompt = document.getElementById('shop-prompt');
-const shopPanel = document.getElementById('shop-panel');
-const shopTitle = document.getElementById('shop-title');
-const shopBalance = document.getElementById('shop-balance');
-const shopItems = document.getElementById('shop-items');
-const playerInventory = document.getElementById('player-inventory');
-const closeShopButton = document.getElementById('close-shop');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x98d8ff);
@@ -32,6 +25,267 @@ container.appendChild(renderer.domElement);
 const clock = new THREE.Clock();
 const keys = {};
 
+// ============================================
+// CONSUMABLE ITEM SYSTEM
+// ============================================
+
+const consumableEffects = {
+  water: {
+    name: 'Water Bottle',
+    duration: 0, // instant consumables have 0 duration
+    effect: (playerState) => {
+      playerState.energy = Math.min(playerState.energy + 25, 100);
+    }
+  },
+  coffee: {
+    name: 'Coffee',
+    duration: 0,
+    effect: (playerState) => {
+      playerState.energy = Math.min(playerState.energy + 15, 100);
+      playerState.speedBoost = 1.3;
+      playerState.speedBoostTimer = 8; // 8 seconds
+    }
+  },
+  steak: {
+    name: 'Steak Dinner',
+    duration: 0,
+    effect: (playerState) => {
+      playerState.energy = 100;
+      playerState.health = Math.min(playerState.health + 20, 100);
+    }
+  },
+  whiskey: {
+    name: 'Whiskey',
+    duration: 0,
+    effect: (playerState) => {
+      playerState.energy = Math.min(playerState.energy + 30, 100);
+      playerState.drunkness = 0.4;
+      playerState.drunkTimer = 6; // wears off after 6 seconds
+    }
+  },
+  medicine: {
+    name: 'Herbal Medicine',
+    duration: 0,
+    effect: (playerState) => {
+      playerState.health = 100;
+    }
+  }
+};
+
+// ============================================
+// BUSINESS CATALOG SYSTEM
+// ============================================
+
+const businessCatalog = {
+  general_store: {
+    name: 'General Store',
+    owner: 'Tom Wills',
+    position: { x: 0, y: 0, z: 0 }, // at town center
+    type: 'retail',
+    inventory: [
+      { itemId: 'water', stock: 50, price: 2 },
+      { itemId: 'coffee', stock: 30, price: 3 },
+      { itemId: 'steak', stock: 20, price: 8 },
+      { itemId: 'medicine', stock: 15, price: 12 }
+    ]
+  },
+  desert_saloon: {
+    name: 'Desert Saloon',
+    owner: 'Whiskey Pete',
+    position: { x: -1200, y: 0, z: -820 },
+    type: 'tavern',
+    inventory: [
+      { itemId: 'whiskey', stock: 40, price: 5 },
+      { itemId: 'water', stock: 35, price: 2 },
+      { itemId: 'coffee', stock: 25, price: 4 }
+    ]
+  },
+  mining_store: {
+    name: 'Mining Camp Supply',
+    owner: 'Old Hank',
+    position: { x: -980, y: 0, z: 430 },
+    type: 'supply',
+    inventory: [
+      { itemId: 'water', stock: 60, price: 1.5 },
+      { itemId: 'steak', stock: 25, price: 7 },
+      { itemId: 'medicine', stock: 20, price: 11 }
+    ]
+  },
+  forest_lodge: {
+    name: 'Forest Lodge',
+    owner: 'Sarah Lodge',
+    position: { x: 1150, y: 0, z: 240 },
+    type: 'inn',
+    inventory: [
+      { itemId: 'steak', stock: 35, price: 9 },
+      { itemId: 'coffee', stock: 40, price: 2.5 },
+      { itemId: 'water', stock: 45, price: 1.8 },
+      { itemId: 'medicine', stock: 18, price: 13 }
+    ]
+  },
+  ranch_store: {
+    name: 'Ranch Provisions',
+    owner: 'Buck Thompson',
+    position: { x: 840, y: 0, z: -380 },
+    type: 'retail',
+    inventory: [
+      { itemId: 'steak', stock: 50, price: 6 },
+      { itemId: 'water', stock: 55, price: 1.5 },
+      { itemId: 'coffee', stock: 30, price: 3.5 },
+      { itemId: 'medicine', stock: 16, price: 10 }
+    ]
+  }
+};
+
+// ============================================
+// SHOP FRAMEWORK
+// ============================================
+
+const shopFramework = {
+  currentShop: null,
+  isOpen: false,
+
+  init() {
+    this.createShopPanel();
+  },
+
+  createShopPanel() {
+    const existingPanel = document.getElementById('shop-panel');
+    if (existingPanel) existingPanel.remove();
+
+    const panel = document.createElement('div');
+    panel.id = 'shop-panel';
+    panel.style.display = 'none';
+    panel.innerHTML = `
+      <div class="shop-header">
+        <h2 id="shop-name">Shop</h2>
+        <p id="shop-owner">Owner: Unknown</p>
+        <div class="shop-stats">
+          <span id="wallet-display">Wallet: $0</span>
+          <span id="energy-display">Energy: 100/100</span>
+        </div>
+      </div>
+      <div class="shop-inventory">
+        <div id="shop-items"></div>
+      </div>
+      <div class="shop-footer">
+        <button id="close-shop-btn">Close Shop (ESC)</button>
+      </div>
+    `;
+    document.body.appendChild(panel);
+
+    document.getElementById('close-shop-btn').addEventListener('click', () => {
+      this.close();
+    });
+  },
+
+  open(businessId) {
+    const business = businessCatalog[businessId];
+    if (!business) return;
+
+    this.currentShop = businessId;
+    this.isOpen = true;
+
+    const panel = document.getElementById('shop-panel');
+    document.getElementById('shop-name').textContent = business.name;
+    document.getElementById('shop-owner').textContent = `Owner: ${business.owner}`;
+    this.updateShopDisplay();
+
+    panel.style.display = 'block';
+  },
+
+  close() {
+    this.isOpen = false;
+    this.currentShop = null;
+    document.getElementById('shop-panel').style.display = 'none';
+  },
+
+  updateShopDisplay() {
+    if (!this.currentShop) return;
+
+    const business = businessCatalog[this.currentShop];
+    const itemsContainer = document.getElementById('shop-items');
+    itemsContainer.innerHTML = '';
+
+    // Update wallet and energy display
+    document.getElementById('wallet-display').textContent = `Wallet: $${player.wallet.toFixed(2)}`;
+    document.getElementById('energy-display').textContent = `Energy: ${Math.round(player.energy)}/100`;
+
+    business.inventory.forEach((item) => {
+      const itemEffect = consumableEffects[item.itemId];
+      if (!itemEffect) return;
+
+      const itemDiv = document.createElement('div');
+      itemDiv.className = 'shop-item';
+      itemDiv.innerHTML = `
+        <div class="item-info">
+          <h3>${itemEffect.name}</h3>
+          <p>Stock: ${item.stock}</p>
+          <p class="price">$${item.price.toFixed(2)}</p>
+        </div>
+        <button class="buy-btn" data-item="${item.itemId}" data-price="${item.price}">
+          Buy
+        </button>
+      `;
+
+      const button = itemDiv.querySelector('.buy-btn');
+      button.addEventListener('click', () => {
+        this.buyItem(item.itemId, item.price, this.currentShop);
+      });
+
+      itemsContainer.appendChild(itemDiv);
+    });
+  },
+
+  buyItem(itemId, price, businessId) {
+    const business = businessCatalog[businessId];
+    if (!business) return;
+
+    // Find the item in inventory
+    const inventoryItem = business.inventory.find((inv) => inv.itemId === itemId);
+    if (!inventoryItem || inventoryItem.stock <= 0) {
+      alert('Out of stock!');
+      return;
+    }
+
+    // Check wallet
+    if (player.wallet < price) {
+      alert('Not enough money!');
+      return;
+    }
+
+    // Process transaction
+    player.wallet -= price;
+    inventoryItem.stock--;
+    player.inventory.push(itemId);
+
+    this.updateShopDisplay();
+  },
+
+  getNearestShop(position, range = 60) {
+    let nearest = null;
+    let nearestDist = range;
+
+    Object.entries(businessCatalog).forEach(([businessId, business]) => {
+      const bPos = business.position;
+      const dx = position.x - bPos.x;
+      const dz = position.z - bPos.z;
+      const dist = Math.sqrt(dx * dx + dz * dz);
+
+      if (dist < nearestDist) {
+        nearestDist = dist;
+        nearest = businessId;
+      }
+    });
+
+    return nearest;
+  }
+};
+
+// ============================================
+// PLAYER STATE & WORLD
+// ============================================
+
 const world = {
   vehicles: [],
   buildings: [],
@@ -39,8 +293,7 @@ const world = {
   rails: [],
   landmarks: [],
   trees: [],
-  settlementNames: [],
-  shops: []
+  settlementNames: []
 };
 
 const player = {
@@ -53,18 +306,19 @@ const player = {
   sprintSpeed: 32,
   currentVehicle: 'foot',
   mountedVehicle: null,
-  jumpVelocity: 15
-};
+  jumpVelocity: 15,
 
-const playerState = {
-  cash: 1250,
-  inventory: {
-    water: 2,
-    coffee: 1,
-    bandage: 1
-  },
-  currentShop: null,
-  lastInteractionMessage: 'Press F to browse the shop'
+  // Economy
+  wallet: 50.0, // Starting cash
+  inventory: [],
+  energy: 100,
+  health: 100,
+
+  // Consumable effects
+  speedBoost: 1.0,
+  speedBoostTimer: 0,
+  drunkness: 0,
+  drunkTimer: 0
 };
 
 const vehicleCatalog = ['foot', 'horse', 'wagon', 'buggy', 'stagecoach', 'cart'];
@@ -77,28 +331,8 @@ const vehicleSpeedMap = {
   cart: 28
 };
 
-const shopCatalog = {
-  frontierGeneralStore: {
-    id: 'frontierGeneralStore',
-    name: 'Frontier General Store',
-    type: 'general-store',
-    position: new THREE.Vector3(150, 0, 90),
-    items: [
-      { id: 'water', name: 'Canteen Water', category: 'Consumable', price: 4, stock: 12 },
-      { id: 'coffee', name: 'Coffee Beans', category: 'Drink', price: 6, stock: 9 },
-      { id: 'bandage', name: 'Bandage', category: 'Medical', price: 12, stock: 8 },
-      { id: 'lantern', name: 'Lantern', category: 'Travel', price: 18, stock: 5 },
-      { id: 'boots', name: 'Trail Boots', category: 'Clothing', price: 42, stock: 3 }
-    ]
-  }
-};
-
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
-}
-
-function formatMoney(value) {
-  return `$${value}`;
 }
 
 function terrainHeightAt(x, z) {
@@ -436,36 +670,6 @@ function createMineSite() {
   scene.add(mine);
 }
 
-function createShopMesh(shop) {
-  const building = new THREE.Mesh(
-    new THREE.BoxGeometry(52, 26, 40),
-    new THREE.MeshStandardMaterial({ color: 0x8b613f, roughness: 0.9 })
-  );
-  building.position.set(shop.position.x, terrainHeightAt(shop.position.x, shop.position.z) + 13, shop.position.z);
-  building.castShadow = true;
-  building.receiveShadow = true;
-  scene.add(building);
-
-  const roof = new THREE.Mesh(
-    new THREE.BoxGeometry(58, 6, 42),
-    new THREE.MeshStandardMaterial({ color: 0x5d3f2e, roughness: 0.88 })
-  );
-  roof.position.set(shop.position.x, terrainHeightAt(shop.position.x, shop.position.z) + 29, shop.position.z);
-  roof.castShadow = true;
-  scene.add(roof);
-
-  const sign = new THREE.Mesh(
-    new THREE.BoxGeometry(22, 6, 2),
-    new THREE.MeshStandardMaterial({ color: 0xf1d28d, roughness: 0.75 })
-  );
-  sign.position.set(shop.position.x, terrainHeightAt(shop.position.x, shop.position.z) + 19, shop.position.z + 21);
-  scene.add(sign);
-
-  shop.mesh = building;
-  shop.sign = sign;
-  world.shops.push(shop);
-}
-
 function createWorld() {
   createTerrain();
   createSkyAndLighting();
@@ -488,8 +692,6 @@ function createWorld() {
   createSettlementMarker(320, -990, 'Outlaw Camp', 0x8a5a47, 22);
   createSettlementMarker(980, -1200, 'Canyon Lookout', 0xb5895a, 28);
   createSettlementMarker(1500, -200, 'Rail Depot', 0xd0bb74, 24);
-
-  Object.values(shopCatalog).forEach((shop) => createShopMesh(shop));
 
   createTrees();
   createRockyMountains();
@@ -651,107 +853,17 @@ function cycleVehicle() {
   player.mountedVehicle = vehicle;
 }
 
-function getNearestShop() {
-  let nearestShop = null;
-  let nearestDistance = Infinity;
+function consumeItem(itemId) {
+  const effect = consumableEffects[itemId];
+  if (!effect) return;
 
-  world.shops.forEach((shop) => {
-    const dist = shop.position.distanceTo(player.position);
-    if (dist < nearestDistance) {
-      nearestDistance = dist;
-      nearestShop = shop;
-    }
-  });
-
-  return nearestDistance <= 45 ? nearestShop : null;
-}
-
-function renderInventory() {
-  const entries = Object.entries(playerState.inventory).sort(([a], [b]) => a.localeCompare(b));
-  playerInventory.innerHTML = '';
-
-  if (!entries.length) {
-    playerInventory.innerHTML = '<li><span>Empty</span><span>0</span></li>';
-    return;
+  effect.effect(player);
+  
+  // Remove from inventory
+  const index = player.inventory.indexOf(itemId);
+  if (index > -1) {
+    player.inventory.splice(index, 1);
   }
-
-  entries.forEach(([itemId, quantity]) => {
-    const itemName = itemId.charAt(0).toUpperCase() + itemId.slice(1);
-    const li = document.createElement('li');
-    li.innerHTML = `<span>${itemName}</span><span>x${quantity}</span>`;
-    playerInventory.appendChild(li);
-  });
-}
-
-function renderShop() {
-  const shop = playerState.currentShop;
-  if (!shop) {
-    shopPanel.classList.add('hidden');
-    return;
-  }
-
-  shopTitle.textContent = shop.name;
-  shopBalance.textContent = formatMoney(playerState.cash);
-  shopItems.innerHTML = '';
-
-  shop.items.forEach((item) => {
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.className = 'shop-item';
-    button.disabled = item.stock <= 0 || playerState.cash < item.price;
-
-    const wrapper = document.createElement('span');
-    wrapper.className = 'shop-item-main';
-    wrapper.innerHTML = `<span class="shop-item-name">${item.name}</span><span class="shop-item-meta">${item.category} · ${item.stock} in stock</span>`;
-
-    const price = document.createElement('span');
-    price.className = 'shop-item-price';
-    price.textContent = formatMoney(item.price);
-
-    button.appendChild(wrapper);
-    button.appendChild(price);
-    button.addEventListener('click', () => {
-      buyShopItem(shop, item);
-    });
-
-    shopItems.appendChild(button);
-  });
-
-  renderInventory();
-  shopPanel.classList.remove('hidden');
-}
-
-function buyShopItem(shop, item) {
-  if (item.stock <= 0) {
-    return;
-  }
-
-  if (playerState.cash < item.price) {
-    playerState.lastInteractionMessage = 'Not enough cash for that purchase.';
-    return;
-  }
-
-  playerState.cash -= item.price;
-  item.stock -= 1;
-  playerState.inventory[item.id] = (playerState.inventory[item.id] || 0) + 1;
-  playerState.lastInteractionMessage = `Bought ${item.name}.`;
-  renderShop();
-}
-
-function openShop(shop) {
-  if (!shop) {
-    return;
-  }
-
-  playerState.currentShop = shop;
-  playerState.lastInteractionMessage = `Browsing ${shop.name}.`;
-  renderShop();
-}
-
-function closeShop() {
-  playerState.currentShop = null;
-  shopPanel.classList.add('hidden');
-  playerState.lastInteractionMessage = 'Shop closed.';
 }
 
 function updatePlayer(dt) {
@@ -769,6 +881,8 @@ function updatePlayer(dt) {
     let speed = player.currentVehicle === 'foot'
       ? (keys['ShiftLeft'] || keys['ShiftRight'] ? player.sprintSpeed : player.moveSpeed)
       : vehicleSpeedMap[player.currentVehicle];
+
+    speed *= player.speedBoost;
 
     const step = new THREE.Vector3(dir.x * speed * dt, 0, dir.z * speed * dt);
 
@@ -802,6 +916,30 @@ function updatePlayer(dt) {
     }
   }
 
+  // Update consumable effects
+  player.energy = Math.max(0, player.energy - 0.5 * dt); // Energy depletes over time
+  player.health = Math.max(0, player.health - 0.1 * dt); // Health slowly depletes
+  
+  if (player.speedBoostTimer > 0) {
+    player.speedBoostTimer -= dt;
+    if (player.speedBoostTimer <= 0) {
+      player.speedBoost = 1.0;
+    }
+  }
+
+  if (player.drunkTimer > 0) {
+    player.drunkTimer -= dt;
+    if (player.drunkTimer <= 0) {
+      player.drunkness = 0;
+    }
+  }
+
+  // Add drunken camera sway
+  if (player.drunkness > 0) {
+    player.pitch += Math.sin(Date.now() * 0.003) * player.drunkness * 0.01;
+    player.yaw += Math.cos(Date.now() * 0.002) * player.drunkness * 0.01;
+  }
+
   player.position.x = clamp(player.position.x, -HALF_WORLD, HALF_WORLD);
   player.position.z = clamp(player.position.z, -HALF_WORLD, HALF_WORLD);
 }
@@ -832,15 +970,6 @@ function updateHud() {
     ? 'On Foot'
     : player.currentVehicle.charAt(0).toUpperCase() + player.currentVehicle.slice(1);
   positionHud.textContent = `X: ${Math.round(player.position.x)} Z: ${Math.round(player.position.z)}`;
-
-  const nearestShop = getNearestShop();
-  if (nearestShop && !playerState.currentShop) {
-    shopPrompt.textContent = `Press F to visit ${nearestShop.name}`;
-  } else if (playerState.currentShop) {
-    shopPrompt.textContent = `${playerState.currentShop.name} open — buy supplies`;
-  } else {
-    shopPrompt.textContent = playerState.lastInteractionMessage;
-  }
 }
 
 function updateVehicleGestures() {
@@ -868,12 +997,12 @@ function animate() {
 function initialize() {
   createWorld();
   createVehicles();
+  shopFramework.init();
 
   player.position.set(0, terrainHeightAt(0, 0) + TERRAIN_HEIGHT_OFFSET, 0);
   player.currentVehicle = 'foot';
 
   updateCamera();
-  renderShop();
   animate();
 }
 
@@ -898,24 +1027,30 @@ document.addEventListener('keydown', (event) => {
   keys[event.code] = true;
   if (event.code === 'KeyE') toggleMount();
   if (event.code === 'KeyV') cycleVehicle();
-  if (event.code === 'KeyF') {
-    const nearestShop = getNearestShop();
-    if (playerState.currentShop) {
-      closeShop();
-    } else if (nearestShop) {
-      openShop(nearestShop);
-    }
-  }
   if (event.code === 'Space' && player.onGround && player.currentVehicle === 'foot') {
     player.velocityY = player.jumpVelocity;
     player.onGround = false;
+  }
+  if (event.code === 'KeyF') {
+    const nearestShop = shopFramework.getNearestShop(player.position);
+    if (nearestShop) {
+      shopFramework.open(nearestShop);
+    }
+  }
+  if (event.code === 'Escape') {
+    shopFramework.close();
+  }
+  // Consume item with number keys (1-9)
+  if (event.code.startsWith('Digit') && !shopFramework.isOpen) {
+    const digit = parseInt(event.code.substring(5)) - 1;
+    if (digit >= 0 && digit < player.inventory.length) {
+      consumeItem(player.inventory[digit]);
+    }
   }
 });
 
 document.addEventListener('keyup', (event) => {
   keys[event.code] = false;
 });
-
-closeShopButton.addEventListener('click', () => closeShop());
 
 initialize();
