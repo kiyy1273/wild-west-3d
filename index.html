@@ -1,32 +1,29 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wild West 3D - Open World</title>
-    <link rel="stylesheet" href="style.css">
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Wild West Frontier 3D</title>
+    <link rel="stylesheet" href="style.css" />
 </head>
 <body>
     <div id="game-container"></div>
+
     <div id="hud">
         <div id="speed-meter">Speed: 0 km/h</div>
         <div id="vehicle-type">On Foot</div>
         <div id="position">X: 0 Z: 0</div>
         <div id="instructions">
-            <p><strong>WASD/Arrow Keys</strong> - Move</p>
-            <p><strong>SPACE</strong> - Jump</p>
-            <p><strong>E</strong> - Mount/Dismount Horse</p>
-            <p><strong>V</strong> - Change Vehicle</p>
-            <p><strong>Mouse</strong> - Look Around</p>
-            <p><strong>SHIFT</strong> - Sprint</p>
+            <p><strong>WASD / Arrows</strong> Move</p>
+            <p><strong>Mouse</strong> Look</p>
+            <p><strong>Space</strong> Jump</p>
+            <p><strong>E</strong> Mount / Dismount</p>
+            <p><strong>V</strong> Change Vehicle</p>
+            <p><strong>Shift</strong> Sprint</p>
         </div>
     </div>
 
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
     <script src="game.js"></script>
-    <script src="world.js"></script>
-    <script src="terrain.js"></script>
-    <script src="vehicles.js"></script>
-    <script src="player.js"></script>
 </body>
 </html>
