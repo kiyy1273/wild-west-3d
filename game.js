@@ -9,6 +9,13 @@ const container = document.getElementById('game-container');
 const speedHud = document.getElementById('speed-meter');
 const vehicleHud = document.getElementById('vehicle-type');
 const positionHud = document.getElementById('position');
+const shopPrompt = document.getElementById('shop-prompt');
+const shopPanel = document.getElementById('shop-panel');
+const shopTitle = document.getElementById('shop-title');
+const shopBalance = document.getElementById('shop-balance');
+const shopItems = document.getElementById('shop-items');
+const playerInventory = document.getElementById('player-inventory');
+const closeShopButton = document.getElementById('close-shop');
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x98d8ff);
@@ -32,7 +39,8 @@ const world = {
   rails: [],
   landmarks: [],
   trees: [],
-  settlementNames: []
+  settlementNames: [],
+  shops: []
 };
 
 const player = {
@@ -48,6 +56,17 @@ const player = {
   jumpVelocity: 15
 };
 
+const playerState = {
+  cash: 1250,
+  inventory: {
+    water: 2,
+    coffee: 1,
+    bandage: 1
+  },
+  currentShop: null,
+  lastInteractionMessage: 'Press F to browse the shop'
+};
+
 const vehicleCatalog = ['foot', 'horse', 'wagon', 'buggy', 'stagecoach', 'cart'];
 const vehicleSpeedMap = {
   foot: 18,
@@ -58,8 +77,28 @@ const vehicleSpeedMap = {
   cart: 28
 };
 
+const shopCatalog = {
+  frontierGeneralStore: {
+    id: 'frontierGeneralStore',
+    name: 'Frontier General Store',
+    type: 'general-store',
+    position: new THREE.Vector3(150, 0, 90),
+    items: [
+      { id: 'water', name: 'Canteen Water', category: 'Consumable', price: 4, stock: 12 },
+      { id: 'coffee', name: 'Coffee Beans', category: 'Drink', price: 6, stock: 9 },
+      { id: 'bandage', name: 'Bandage', category: 'Medical', price: 12, stock: 8 },
+      { id: 'lantern', name: 'Lantern', category: 'Travel', price: 18, stock: 5 },
+      { id: 'boots', name: 'Trail Boots', category: 'Clothing', price: 42, stock: 3 }
+    ]
+  }
+};
+
 function clamp(value, min, max) {
   return Math.min(Math.max(value, min), max);
+}
+
+function formatMoney(value) {
+  return `$${value}`;
 }
 
 function terrainHeightAt(x, z) {
@@ -397,6 +436,36 @@ function createMineSite() {
   scene.add(mine);
 }
 
+function createShopMesh(shop) {
+  const building = new THREE.Mesh(
+    new THREE.BoxGeometry(52, 26, 40),
+    new THREE.MeshStandardMaterial({ color: 0x8b613f, roughness: 0.9 })
+  );
+  building.position.set(shop.position.x, terrainHeightAt(shop.position.x, shop.position.z) + 13, shop.position.z);
+  building.castShadow = true;
+  building.receiveShadow = true;
+  scene.add(building);
+
+  const roof = new THREE.Mesh(
+    new THREE.BoxGeometry(58, 6, 42),
+    new THREE.MeshStandardMaterial({ color: 0x5d3f2e, roughness: 0.88 })
+  );
+  roof.position.set(shop.position.x, terrainHeightAt(shop.position.x, shop.position.z) + 29, shop.position.z);
+  roof.castShadow = true;
+  scene.add(roof);
+
+  const sign = new THREE.Mesh(
+    new THREE.BoxGeometry(22, 6, 2),
+    new THREE.MeshStandardMaterial({ color: 0xf1d28d, roughness: 0.75 })
+  );
+  sign.position.set(shop.position.x, terrainHeightAt(shop.position.x, shop.position.z) + 19, shop.position.z + 21);
+  scene.add(sign);
+
+  shop.mesh = building;
+  shop.sign = sign;
+  world.shops.push(shop);
+}
+
 function createWorld() {
   createTerrain();
   createSkyAndLighting();
@@ -419,6 +488,8 @@ function createWorld() {
   createSettlementMarker(320, -990, 'Outlaw Camp', 0x8a5a47, 22);
   createSettlementMarker(980, -1200, 'Canyon Lookout', 0xb5895a, 28);
   createSettlementMarker(1500, -200, 'Rail Depot', 0xd0bb74, 24);
+
+  Object.values(shopCatalog).forEach((shop) => createShopMesh(shop));
 
   createTrees();
   createRockyMountains();
@@ -580,6 +651,109 @@ function cycleVehicle() {
   player.mountedVehicle = vehicle;
 }
 
+function getNearestShop() {
+  let nearestShop = null;
+  let nearestDistance = Infinity;
+
+  world.shops.forEach((shop) => {
+    const dist = shop.position.distanceTo(player.position);
+    if (dist < nearestDistance) {
+      nearestDistance = dist;
+      nearestShop = shop;
+    }
+  });
+
+  return nearestDistance <= 45 ? nearestShop : null;
+}
+
+function renderInventory() {
+  const entries = Object.entries(playerState.inventory).sort(([a], [b]) => a.localeCompare(b));
+  playerInventory.innerHTML = '';
+
+  if (!entries.length) {
+    playerInventory.innerHTML = '<li><span>Empty</span><span>0</span></li>';
+    return;
+  }
+
+  entries.forEach(([itemId, quantity]) => {
+    const itemName = itemId.charAt(0).toUpperCase() + itemId.slice(1);
+    const li = document.createElement('li');
+    li.innerHTML = `<span>${itemName}</span><span>x${quantity}</span>`;
+    playerInventory.appendChild(li);
+  });
+}
+
+function renderShop() {
+  const shop = playerState.currentShop;
+  if (!shop) {
+    shopPanel.classList.add('hidden');
+    return;
+  }
+
+  shopTitle.textContent = shop.name;
+  shopBalance.textContent = formatMoney(playerState.cash);
+  shopItems.innerHTML = '';
+
+  shop.items.forEach((item) => {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'shop-item';
+    button.disabled = item.stock <= 0 || playerState.cash < item.price;
+
+    const wrapper = document.createElement('span');
+    wrapper.className = 'shop-item-main';
+    wrapper.innerHTML = `<span class="shop-item-name">${item.name}</span><span class="shop-item-meta">${item.category} · ${item.stock} in stock</span>`;
+
+    const price = document.createElement('span');
+    price.className = 'shop-item-price';
+    price.textContent = formatMoney(item.price);
+
+    button.appendChild(wrapper);
+    button.appendChild(price);
+    button.addEventListener('click', () => {
+      buyShopItem(shop, item);
+    });
+
+    shopItems.appendChild(button);
+  });
+
+  renderInventory();
+  shopPanel.classList.remove('hidden');
+}
+
+function buyShopItem(shop, item) {
+  if (item.stock <= 0) {
+    return;
+  }
+
+  if (playerState.cash < item.price) {
+    playerState.lastInteractionMessage = 'Not enough cash for that purchase.';
+    return;
+  }
+
+  playerState.cash -= item.price;
+  item.stock -= 1;
+  playerState.inventory[item.id] = (playerState.inventory[item.id] || 0) + 1;
+  playerState.lastInteractionMessage = `Bought ${item.name}.`;
+  renderShop();
+}
+
+function openShop(shop) {
+  if (!shop) {
+    return;
+  }
+
+  playerState.currentShop = shop;
+  playerState.lastInteractionMessage = `Browsing ${shop.name}.`;
+  renderShop();
+}
+
+function closeShop() {
+  playerState.currentShop = null;
+  shopPanel.classList.add('hidden');
+  playerState.lastInteractionMessage = 'Shop closed.';
+}
+
 function updatePlayer(dt) {
   const moveX = (keys['KeyD'] || keys['ArrowRight'] ? 1 : 0) - (keys['KeyA'] || keys['ArrowLeft'] ? 1 : 0);
   const moveZ = (keys['KeyW'] || keys['ArrowUp'] ? 1 : 0) - (keys['KeyS'] || keys['ArrowDown'] ? 1 : 0);
@@ -658,6 +832,15 @@ function updateHud() {
     ? 'On Foot'
     : player.currentVehicle.charAt(0).toUpperCase() + player.currentVehicle.slice(1);
   positionHud.textContent = `X: ${Math.round(player.position.x)} Z: ${Math.round(player.position.z)}`;
+
+  const nearestShop = getNearestShop();
+  if (nearestShop && !playerState.currentShop) {
+    shopPrompt.textContent = `Press F to visit ${nearestShop.name}`;
+  } else if (playerState.currentShop) {
+    shopPrompt.textContent = `${playerState.currentShop.name} open — buy supplies`;
+  } else {
+    shopPrompt.textContent = playerState.lastInteractionMessage;
+  }
 }
 
 function updateVehicleGestures() {
@@ -690,6 +873,7 @@ function initialize() {
   player.currentVehicle = 'foot';
 
   updateCamera();
+  renderShop();
   animate();
 }
 
@@ -714,6 +898,14 @@ document.addEventListener('keydown', (event) => {
   keys[event.code] = true;
   if (event.code === 'KeyE') toggleMount();
   if (event.code === 'KeyV') cycleVehicle();
+  if (event.code === 'KeyF') {
+    const nearestShop = getNearestShop();
+    if (playerState.currentShop) {
+      closeShop();
+    } else if (nearestShop) {
+      openShop(nearestShop);
+    }
+  }
   if (event.code === 'Space' && player.onGround && player.currentVehicle === 'foot') {
     player.velocityY = player.jumpVelocity;
     player.onGround = false;
@@ -723,5 +915,7 @@ document.addEventListener('keydown', (event) => {
 document.addEventListener('keyup', (event) => {
   keys[event.code] = false;
 });
+
+closeShopButton.addEventListener('click', () => closeShop());
 
 initialize();
